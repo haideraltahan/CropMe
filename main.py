@@ -1,13 +1,16 @@
 from PyQt5.QtCore import QDir, Qt, QUrl, QSettings
 from PyQt5.QtMultimedia import QMediaContent, QMediaPlayer
 from PyQt5.QtMultimediaWidgets import QVideoWidget
-from PyQt5.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QLabel, QMessageBox,
+from PyQt5.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QLabel, QMessageBox, QCheckBox,
                              QPushButton, QSizePolicy, QSlider, QStyle, QVBoxLayout, QWidget)
 from PyQt5.QtWidgets import QMainWindow, QWidget, QPushButton, QAction
 from PyQt5.QtGui import QIcon
+
 import subprocess
 import sys
 import os
+import cv2
+import numpy as np
 
 
 class VideoWindow(QMainWindow):
@@ -21,6 +24,8 @@ class VideoWindow(QMainWindow):
         self.frameMovementThreshold = 500
         self.initFrame = -1
         self.finalFrame = -1
+        self.latestvideo = ''
+        self.autoplay = self.settings.value("autoplay", False, bool)
         self.mediaPlayer = QMediaPlayer(None, QMediaPlayer.VideoSurface)
 
         videoWidget = QVideoWidget()
@@ -45,10 +50,19 @@ class VideoWindow(QMainWindow):
         self.cropButton.setText('Crop Video')
         self.cropButton.clicked.connect(self.crop)
 
+        self.watchnewvid = QPushButton()
+        self.watchnewvid.setEnabled(False)
+        self.watchnewvid.setText('Watch Cropped Video')
+        self.watchnewvid.clicked.connect(self.opencv_playvideo)
+
         self.deleteButton = QPushButton()
         self.deleteButton.setEnabled(False)
         self.deleteButton.setText('Delete Original Video')
         self.deleteButton.clicked.connect(self.deleteOriginalVideo)
+
+        self.autoplayCheck = QCheckBox("Autoplay after cropping?", self)
+        self.autoplayCheck.setChecked(self.settings.value("autoplay", False, bool))
+        self.autoplayCheck.stateChanged.connect(self.autoplaySwitch)
 
         self.positionSlider = QSlider(Qt.Horizontal)
         self.positionSlider.setRange(0, 0)
@@ -63,6 +77,10 @@ class VideoWindow(QMainWindow):
 
         self.errorLabel = QLabel()
         self.errorLabel.setSizePolicy(QSizePolicy.Preferred,
+                                      QSizePolicy.Maximum)
+
+        self.fileName = QLabel()
+        self.fileName.setSizePolicy(QSizePolicy.Preferred,
                                       QSizePolicy.Maximum)
 
         # Create new action
@@ -90,10 +108,10 @@ class VideoWindow(QMainWindow):
         backAction.triggered.connect(self.prevFrame)
 
         # Create Play action
-        backAction = QAction(QIcon('space'), '&space', self)
-        backAction.setShortcut(' ')
-        backAction.setStatusTip('Play/Pause')
-        backAction.triggered.connect(self.play)
+        playAction = QAction(QIcon('space'), '&space', self)
+        playAction.setShortcut(' ')
+        playAction.setStatusTip('Play/Pause')
+        playAction.triggered.connect(self.play)
 
         # Create menu bar and add action
         menuBar = self.menuBar()
@@ -101,6 +119,7 @@ class VideoWindow(QMainWindow):
         editMenu = menuBar.addMenu('&Edit')
         editMenu.addAction(backAction)
         editMenu.addAction(fowardAction)
+        editMenu.addAction(playAction)
         # fileMenu.addAction(newAction)
         fileMenu.addAction(openAction)
         fileMenu.addAction(exitAction)
@@ -121,12 +140,18 @@ class VideoWindow(QMainWindow):
         lay.addWidget(self.initFrameButton)
         lay.addWidget(self.finalFrameButton)
 
+        watch = QHBoxLayout()
+        watch.addWidget(self.watchnewvid)
+        watch.addWidget(self.autoplayCheck)
+
         layout = QVBoxLayout()
+        layout.addWidget(self.fileName)
         layout.addWidget(videoWidget)
         layout.addLayout(controlLayout)
         layout.addLayout(lay)
         layout.addWidget(self.cropButton)
         layout.addWidget(self.deleteButton)
+        layout.addLayout(watch)
         layout.addWidget(self.errorLabel)
 
         # Set widget to contain window contents
@@ -137,6 +162,25 @@ class VideoWindow(QMainWindow):
         self.mediaPlayer.positionChanged.connect(self.positionChanged)
         self.mediaPlayer.durationChanged.connect(self.durationChanged)
         self.mediaPlayer.error.connect(self.handleError)
+
+    def opencv_playvideo(self):
+        video = cv2.VideoCapture(self.latestvideo)
+        frames_counter = 1
+        #fps = video.get(cv2.CAP_PROP_FPS)
+        while True:
+            frames_counter = frames_counter + 1
+            check, frame = video.read()
+            if check:
+                cv2.imshow("Capturing", frame)
+                key = cv2.waitKey(15)
+            else:
+                break
+        video.release()
+        cv2.destroyAllWindows()
+
+    def autoplaySwitch(self):
+        self.autoplay = not self.autoplay
+        self.settings.setValue("autoplay", self.autoplay)
 
     def openFile(self):
         options = QFileDialog.Options()
@@ -156,26 +200,30 @@ class VideoWindow(QMainWindow):
             self.finalFrame = -1
             self.cropButton.setEnabled(False)
             self.deleteButton.setEnabled(True)
+            self.watchnewvid.setEnabled(False)
+            self.initFrameButton.setText('Set Initial Frame')
+            self.finalFrameButton.setText('Set Final Frame')
             self.play()
             self.directory = fileName
+            self.fileName.setText(os.path.basename(self.directory))
 
     def ffmpeg_cut(self, filename, start_time, end_time, outfilename):
         os.chdir(os.path.dirname(filename))
         subprocess.call(['ffmpeg',
-                         "-ss", "%f"%start_time,
+                         "-ss", "%.2f"%start_time,
                          "-i", filename,
-                         "-t", "%2f" % end_time,
+                         "-t", "%.2f" % end_time,
                          outfilename
                          ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def setInitFrame(self):
-        self.initFrameButton.setText(self.hhmmss(self.position))
+        self.initFrameButton.setText("Set Initial Frame: " + self.hhmmss(self.position))
         self.initFrame = self.position
         if self.initFrame >= 0 and self.finalFrame >= 0:
             self.cropButton.setEnabled(True)
 
     def setFinalFrame(self):
-        self.finalFrameButton.setText(self.hhmmss(self.position))
+        self.finalFrameButton.setText('Set Final Frame: ' + self.hhmmss(self.position))
         self.finalFrame = self.position
         if self.initFrame >= 0 and self.finalFrame >= 0:
             self.cropButton.setEnabled(True)
@@ -186,10 +234,10 @@ class VideoWindow(QMainWindow):
     def play(self):
         if self.mediaPlayer.state() == QMediaPlayer.PlayingState:
             self.mediaPlayer.pause()
-            self.resize(640, 481)
+            self.resize(self.width(), self.height()+1)
         else:
             self.mediaPlayer.play()
-            self.resize(640, 480)
+            self.resize(self.width(), self.height()-1)
 
     def mediaStateChanged(self, state):
         if self.mediaPlayer.state() == QMediaPlayer.PlayingState:
@@ -202,7 +250,6 @@ class VideoWindow(QMainWindow):
     def positionChanged(self, position):
         self.positionSlider.setValue(position)
         self.position = position
-        print(position)
         if position >= 0:
             self.currentTimeLabel.setText(self.hhmmss(position))
 
@@ -210,6 +257,8 @@ class VideoWindow(QMainWindow):
         self.positionSlider.setRange(0, duration)
         if duration >= 0:
             self.totalTimeLabel.setText(self.hhmmss(duration))
+            self.finalFrame = duration
+            self.finalFrameButton.setText('Set Final Frame: ' + self.hhmmss(duration))
 
     def setPosition(self, position):
         self.mediaPlayer.setPosition(position)
@@ -229,7 +278,7 @@ class VideoWindow(QMainWindow):
         self.setPosition(self.position + self.frameMovementThreshold)
 
     def prevFrame(self):
-        self.setPosition(self.position - self.frameMovementThreshold)
+        self.setPosition(self.position - 2 * self.frameMovementThreshold)
 
     def crop(self):
         i = 0
@@ -238,16 +287,22 @@ class VideoWindow(QMainWindow):
                 self.directory)
             if not os.path.isfile(newFileName):
                 self.ffmpeg_cut(self.directory, (self.initFrame / 1000), (self.finalFrame / 1000), newFileName)
+                self.watchnewvid.setEnabled(True)
+                self.latestvideo = newFileName
+                if self.autoplay:
+                    self.opencv_playvideo()
                 break
             i += 1
 
     def deleteOriginalVideo(self):
-        self.play()
+        if self.mediaPlayer.state() == QMediaPlayer.PlayingState:
+            self.play()
         buttonReply = QMessageBox.question(self, 'Warning message',
                                            f"Would you like to delete {os.path.basename(self.directory)}?",
                                            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if buttonReply == QMessageBox.Yes:
             os.remove(self.directory)
+
 
 
 if __name__ == '__main__':
