@@ -1,4 +1,4 @@
-from PyQt5.QtCore import QDir, Qt, QUrl
+from PyQt5.QtCore import QDir, Qt, QUrl, QSettings
 from PyQt5.QtMultimedia import QMediaContent, QMediaPlayer
 from PyQt5.QtMultimediaWidgets import QVideoWidget
 from PyQt5.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QLabel,
@@ -13,13 +13,13 @@ class VideoWindow(QMainWindow):
 
     def __init__(self, parent=None):
         super(VideoWindow, self).__init__(parent)
+        self.settings = QSettings("CropMe", "CropMe App")
         self.setWindowTitle("CropMe")
-        self.directory = QDir.homePath()
+        self.directory = self.settings.value("directory", QDir.homePath(), str)
         self.position = 0
         self.frameMovementThreshold = 500
         self.initFrame = -1
         self.finalFrame = -1
-
         self.mediaPlayer = QMediaPlayer(None, QMediaPlayer.VideoSurface)
 
         videoWidget = QVideoWidget()
@@ -133,10 +133,13 @@ class VideoWindow(QMainWindow):
         self.mediaPlayer.error.connect(self.handleError)
 
     def openFile(self):
-        fileName, _ = QFileDialog.getOpenFileName(self, "Open Movie",
-                self.directory)
+        options = QFileDialog.Options()
+        options |= QFileDialog.DontUseNativeDialog
+        fileName, _ = QFileDialog.getOpenFileName(parent=self, caption="Open Movie",
+                directory=self.directory, options=options)
 
         if fileName != '':
+            self.settings.setValue("directory", fileName)
             self.mediaPlayer.setMedia(
                     QMediaContent(QUrl.fromLocalFile(fileName)))
             self.playButton.setEnabled(True)
